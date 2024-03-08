@@ -53,29 +53,46 @@ def preprocess(kappa,IA):
 #preprocessed_data = []
 # Iterate over the input files
 
-def process_files(num_files):
-    for file in input_files[:num_files]:
-        # Create a dataset from the file
-        dataset = tf.data.TFRecordDataset(file)
+def convert_files(file):
+    """
+    Process only one file 
+    
+    returns arrays of kappas IAs and list of labels = labelss
+    """
+    
+    # Create a dataset from the file
+    dataset = tf.data.TFRecordDataset(path_to_files)
+    
+    # Apply the map_func to decode the data
+    decoded_data = dataset.map(map_func)
+    
+    #get length by thisd way because the tf_records does not have cardinality
+    length = 0           
+    for kappa, IA, labels in decoded_data:
+        length += 1
         
-        # Apply the map_func to decode the data
-        decoded_data = dataset.map(map_func)
+    #create numpy arrays for storage
+    kappas = np.empty((length,128,128,4))
+    IAs = np.empty((length,128,128,4))
+    labels_list = np.empty((length,2))
+    
+    i = 0
+    
+    #preprocsess the data
+    for kappa, IA, labels in decoded_data:
+        #substract the mean and turn to numpy
+        kappa, IA = preprocess(kappa, IA)
         
-        # Preprocess the data
-        preprocessed_data.extend([(preprocess(kappa, IA), labels) for kappa, IA, labels in decoded_data])
-    # Create the output directory if it doesn't exist
-    output_directory = '/path/to/output_directory'
-    os.makedirs(output_directory, exist_ok=True)
-    # Save the preprocessed data to h5 files
-    for i, (data, labels) in enumerate(preprocessed_data):
-        output_file = f'{output_directory}/example_{i}.h5'
-        with h5py.File(output_file, 'w') as f:
-            f.create_dataset('kappa', data=data[0])
-            f.create_dataset('IA', data=data[1])
-            f.create_dataset('labels', data=labels)
-# Call the function with the desired number of files to process
-#process_files(num_files=2)
+        #store values
+        kappas[i] = kappa
+        IAs[i] = IA
+        labels_list[i] = labels.numpy()
+        i += 1
+    
+    #Save the kappas, IAs and labels to h5 files
 
+    
+    return 0
 
 def process_single_file(file):
     # Create a dataset from the file
