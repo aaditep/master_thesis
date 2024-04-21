@@ -18,8 +18,7 @@ from my_utils.NT_xent_loss import SimCLR_Loss
 
 #fix "too many open files error"
 import torch.multiprocessing
-torch.multiprocessing.set_sharing_strategy('file_system')
-
+#torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 
@@ -47,8 +46,10 @@ def collate__faster_load(idxs):
         sorted_file_groups = sorted(file_groups.items())
         
         #create empty tensors for batches
-        x1_batch = torch.empty((batch_size,1 ,4, 128, 128)) #the 1 is added as tensor.unsqueeze(1)
-        x2_batch = torch.empty((batch_size,1 ,4, 128, 128)) #the 1 is added as tensor.unsqueeze(1)
+        #x1_batch = torch.empty((batch_size,1 ,4, 128, 128)) #the 1 is added as tensor.unsqueeze(1)
+        #x2_batch = torch.empty((batch_size,1 ,4, 128, 128)) #the 1 is added as tensor.unsqueeze(1)
+        x1_batch = torch.empty((batch_size,1 ,4, 64, 64)) #the 1 is added as tensor.unsqueeze(1)
+        x2_batch = torch.empty((batch_size,1 ,4, 64, 64)) #the 1 is added as tensor.unsqueeze(1
         
         count = 0#count for adding elements to batch and take x2
      
@@ -75,7 +76,7 @@ def collate__faster_load(idxs):
                     #add to batch
                     x1_batch[count] = x1
                     x2_batch[count] = x2
-                    
+            
                     #add to counter
                     count +=1
 
@@ -90,33 +91,6 @@ def set_seed(seed = 16):
     np.random.seed(seed)
     torch.manual_seed(seed)
 set_seed(seed = 16)
-
-
-
-#Define the source of data on the local scratch of the node
-
-#get the list of input from the local sctarch
-tmp_dir = os.environ.get('TMPDIR')
-# Get the list of input files
-#small sample dataset
-input_directory = tmp_dir + "/kids_450_h5_small_sample"
-#full dataset
-#input_directory = tmp_dir + "/kids_450_h5"
-file_pattern = '*train.h5'
-file_paths = glob.glob(os.path.join(input_directory, file_pattern))
-
-
-batch_size = 128
-num_workers = 39
-#Initailize the dataloaders for training ("train") and validation ("val") data
-dg = Kids450(phase = "train",file_paths = file_paths)
-train_loader = DataLoader(dg,batch_size = batch_size , drop_last=True,prefetch_factor = 3, collate_fn = collate__faster_load, pin_memory = True, num_workers = num_workers)
-#maybe add prefetch_factor = 3
-vdg = Kids450(phase = "val",file_paths = file_paths)
-valid_loader = DataLoader(vdg,batch_size = batch_size , drop_last=True, prefetch_factor = 3, collate_fn = collate__faster_load, pin_memory = True, num_workers = num_workers)
-print("dataloaders initialized")
-
-
 
 #Setup model
 print("Settin up model",flush = True)
@@ -228,36 +202,6 @@ class PreModel(nn.Module):
         
         return xp
     
-
-    #Initialize the model
-print("Initializing model, sending it to GPU and printing summary: ",flush = True)
-model = PreModel('resnet50').to('cuda:0')
-summary(model, (4, 128, 128))# Works now
-
-
-#Declaration of optimizer, loss and scheduler
-
-
-optimizer = LARS(
-    [params for params in model.parameters() if params.requires_grad],
-    lr=0.2,
-    weight_decay=1e-6,
-    exclude_from_weight_decay=["batch_normalization", "bias"],
-)
-print("Initialized optimizer",flush = True)
-
-# "decay the learning rate with the cosine decay schedule without restarts"
-#SCHEDULER OR LINEAR EWARMUP
-warmupscheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch : (epoch+1)/10.0, verbose = True)
-
-#SCHEDULER FOR COSINE DECAY
-mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 500, eta_min=0.05, last_epoch=-1, verbose = True)
-
-#LOSS FUNCTION
-criterion = SimCLR_Loss(batch_size = batch_size, temperature = 0.5)
-
-print("Initialized Loss",flush = True)
-
 #Extra functions for model saving and loading and pltting features with TSNE
 
 def save_model(model, optimizer, scheduler, current_epoch, name):
@@ -315,8 +259,106 @@ def plot_losses(tr_loss, val_loss,current_epoch):
     plt.savefig(save_path+plt_name, format='pdf')
     #plt.show()
 
+#Dataloading'
+#Define the source of data on the local scratch of the node
 
-    #Training loop
+#get the list of input from the local sctarch
+#tmp_dir = os.environ.get('TMPDIR')
+# Get the list of input files
+#small sample dataset
+#input_directory = tmp_dir + "/kids_450_h5_small_sample"
+#full dataset
+#input_directory = tmp_dir + "/kids_450_h5"
+#file_pattern = '*train.h5'
+#file_paths = glob.glob(os.path.join(input_directory, file_pattern))
+
+def data_origin(origin : str, full_sample = True):
+    if origin == 'local_scratch':
+        tmp_dir = os.environ.get('TMPDIR')
+        # Get the list of input 
+        #full dataset
+        input_directory = tmp_dir + "/kids_450_h5"
+        #small sample dataset
+        if full_sample == False:
+            input_directory = tmp_dir + "/kids_450_h5_small_sample"
+        #input_directory = tmp_dir + "/kids_450_h5"
+        file_pattern = '*train.h5'
+        file_paths = glob.glob(os.path.join(input_directory, file_pattern))
+        return file_paths
+
+
+#batch_size = 16
+#num_workers = 60
+#Initailize the dataloaders for training ("train") and validation ("val") data
+#dg = Kids450(phase = "train",file_paths = file_paths)
+#train_loader = DataLoader(dg,batch_size = batch_size , drop_last=True,prefetch_factor = 3, collate_fn = collate__faster_load, pin_memory = True, num_workers = num_workers)
+#maybe add prefetch_factor = 3
+#vdg = Kids450(phase = "val",file_paths = file_paths)
+#valid_loader = DataLoader(vdg,batch_size = batch_size , drop_last=True, prefetch_factor = 3, collate_fn = collate__faster_load, pin_memory = True, num_workers = num_workers)
+#print("dataloaders initialized")
+
+def prepare_dataloaders(file_paths : list, batch_size: int, num_workers: int):
+    """
+    Prepare the dataloaders for training and validation data
+
+    Args:
+    file_paths : list : list of file paths
+    batch_size : int : batch size
+    num_workers : int : number of workers for dataloader    
+
+    Returns:
+    dg : Kids450 : dataset for training data
+    vdg : Kids450 : dataset for validation data
+    train_loader : DataLoader : dataloader for training data
+    valid_loader : DataLoader : dataloader for validation data   
+    """
+    #Training dataloader
+    dg = Kids450(phase = "train",file_paths = file_paths)
+    train_loader = DataLoader(dg,batch_size = batch_size,
+                               drop_last=True,
+                               prefetch_factor = 3,
+                               collate_fn = collate__faster_load,
+                               pin_memory = True,
+                               num_workers = num_workers)
+    #Validation dataloader
+    vdg = Kids450(phase = "val",file_paths = file_paths)
+    valid_loader = DataLoader(vdg,batch_size = batch_size,
+                               drop_last=True,
+                               prefetch_factor = 3,
+                               collate_fn = collate__faster_load,
+                               pin_memory = True,
+                               num_workers = num_workers)
+    return dg, vdg, train_loader, valid_loader
+
+
+#Set up the dataloaders
+file_paths = data_origin('local_scratch', full_sample = False)
+batch_size = 16
+num_workers = 60
+dg, vdg, train_loader, valid_loader = prepare_dataloaders(file_paths, batch_size, num_workers)
+print("dataloaders initialized")
+
+
+#Initialize the model
+print("Initializing model, sending it to GPU and printing summary: ",flush = True)
+model = PreModel('resnet50').to('cuda:0')
+#summary(model, (4, 128, 128))# Works now
+summary(model, (4, 64, 64))# Works now
+#Declaration of optimizer, loss and scheduler
+optimizer = LARS(
+    [params for params in model.parameters() if params.requires_grad],
+    lr=0.2,
+    weight_decay=1e-6,
+    exclude_from_weight_decay=["batch_normalization", "bias"],
+)
+print("Initialized optimizer",flush = True)
+warmupscheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch : (epoch+1)/10.0, verbose = True) #"decay the learning rate with the cosine decay schedule without restarts"
+mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 500, eta_min=0.05, last_epoch=-1, verbose = True)#scheduler for cosine decay
+criterion = SimCLR_Loss(batch_size = batch_size, temperature = 0.5)#loss function
+print("Initialized Loss",flush = True)
+
+
+#Training loop
 
 nr = 0
 current_epoch = 0
@@ -367,19 +409,19 @@ for epoch in range(100):
         val_loss_epoch = 0
         for step, (x_i, x_j) in enumerate(valid_loader):
         
-          x_i = x_i.squeeze().to('cuda:0').float()
-          x_j = x_j.squeeze().to('cuda:0').float()
+            x_i = x_i.squeeze().to('cuda:0').float()
+            x_j = x_j.squeeze().to('cuda:0').float()
 
-          # positive pair, with encoding
-          z_i = model(x_i)
-          z_j = model(x_j)
+            # positive pair, with encoding
+            z_i = model(x_i)
+            z_j = model(x_j)
 
-          loss = criterion(z_i, z_j)
+            loss = criterion(z_i, z_j)
 
-          if nr == 0 and step % 50 == 0:
-              print(f"Step [{step}/{len(valid_loader)}]\t Loss: {round(loss.item(),5)}",flush = True)
+            if nr == 0 and step % 50 == 0:
+                print(f"Step [{step}/{len(valid_loader)}]\t Loss: {round(loss.item(),5)}",flush = True)
 
-          val_loss_epoch += loss.item()
+            val_loss_epoch += loss.item()
 
     if nr == 0:
         tr_loss.append(tr_loss_epoch / len(train_loader))
@@ -388,7 +430,7 @@ for epoch in range(100):
         print(f"Epoch [{epoch}/{epochs}]\t Validation Loss: {val_loss_epoch / len(valid_loader)}\t lr: {round(lr, 5)}")
         current_epoch += 1
 
-    dg.on_epoch_end()#reset the loss
+    dg.on_epoch_end()#shuffle the data
 
     time_taken = (time.time()-stime)/60
     print(f"Epoch [{epoch}/{epochs}]\t Time Taken: {time_taken} minutes",flush = True)
