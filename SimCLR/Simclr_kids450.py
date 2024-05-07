@@ -96,13 +96,14 @@ class ProjectionHead(nn.Module):
 
 
 class PreModel(nn.Module):
-    def __init__(self,base_model):
+    def __init__(self,base_model, pretrained = True):
         super().__init__()
         self.base_model = base_model
+        self.pretrained = pretrained
         
         #PRETRAINED MODEL
         if self.base_model == 'resnet18':
-            self.pretrained = models.resnet18(pretrained = True)
+            self.pretrained = models.resnet18(pretrained = self.pretrained)
             print("loaded resnet 18", flush=True)
         elif self.base_model == 'resnet50':
             self.pretrained = models.resnet50(pretrained = True)
@@ -228,6 +229,7 @@ def prepare_dataloaders(dg, vdg, batch_size: int, num_workers: int):
                                drop_last=True,
                                prefetch_factor = 3,
                                collate_fn = collate_fn,
+                               shuffle = False,
                                pin_memory = True,
                                num_workers = num_workers)
 
@@ -248,8 +250,8 @@ class Trainer:
         warmupscheduler,
         mainscheduler,
         criterion,
-        save_every,
-        run_name 
+        config,
+
     ) -> None: # the -> None is a return type "hint" that literally tells us that the function returns nothing
         self.gpu_id = gpu_id
         self.model = model.to(gpu_id)
@@ -260,9 +262,11 @@ class Trainer:
         self.warmupscheduler = warmupscheduler
         self.mainscheduler = mainscheduler
         self.loss = criterion
-        self.save_every = save_every
-        self.run_name = run_name
+        self.save_every = config.save_every
+        self.run_name = config.run_name
+        self.continue_training = config.continue_training
 
+        self.epoch_range = range(1,config.total_epochs+1)
         self.total_batches = len(self.train_data)
         self.example_ct = 0 # number of examples seen
         self.batch_ct = 0 # number of batches seen
@@ -270,7 +274,9 @@ class Trainer:
 
         self.stime = 0
         self.tr_loss =[]
+        self.val_loss = []
         self.tr_loss_epoch = 0
+        self.val_loss_epoch = 0
 
 
 
@@ -284,6 +290,7 @@ class Trainer:
         """
         b_sz = len(next(iter(self.train_data))[0]) #get batch size
         print(f"[GPU{self.gpu_id}] Epoch {epoch} | Batchsize: {b_sz} | Steps: {len(self.train_data)}")
+        self.model.train()
         for step,(x_i,x_j) in enumerate(self.train_data):
             x_i = x_i.squeeze().to(self.gpu_id).float()
             x_j = x_j.squeeze().to(self.gpu_id).float()
@@ -306,7 +313,67 @@ class Trainer:
                 wandb.log({"epoch": epoch, "loss": loss}, step=self.example_ct)
             self.tr_loss_epoch += loss.item()
 
-            
+        if epoch < 10 and not self.continue_training:
+            self.warmupscheduler.step()
+
+        if epoch >= 10 or self.continue_training:
+            self.mainscheduler.step()
+
+        #validation cycle
+        self.model.eval()
+        with torch.no_grad():
+            for step,(x_i,x_j) in enumerate(self.valid_data):
+                x_i = x_i.squeeze().to(self.gpu_id).float()
+                x_j = x_j.squeeze().to(self.gpu_id).float()
+                z_i = self.model(x_i)
+                z_j = self.model(x_j)
+                loss = self.loss(z_i, z_j)
+                
+                if step % 50 == 0: #log loss at every 50th step
+                    print(f"Validation Step [{step}/{len(self.valid_data)}]\t Loss: {round(loss.item(), 5)}",flush = True)
+                    wandb.log({"epoch": epoch, "val_loss": loss}, step=self.example_ct)
+                self.val_loss_epoch += loss.item()
+        
+
+
+    def train(self, max_epochs: int):
+        """
+        Train the model. learning rate schedulers are used for warmup and cosine decay depending on the epoch
+        Args:
+        max_epochs : int : maximum epochs
+        """
+         # Tell wandb to watch what the model gets up to: gradients, weights, and more!
+        wandb.watch(self.model, self.loss, log="all", log_freq=50)
+        if self.continue_training:
+            self.epoch_range = range(config.last_epoch+1, config.total_epochs+1)
+        for epoch in self.epoch_range:
+            #epoch += 1 #start from 1
+            self.tr_loss_epoch = 0
+            self.val_loss_epoch = 0
+            self.stime = time.time()
+            self._run_epoch(epoch)
+            #if epoch < 10:
+            #    self.warmupscheduler.step()
+            #
+            #if epoch >= 10:
+            #    self.mainscheduler.step()
+
+            if epoch % self.save_every == 0:
+                self.save_model(self.model, self.optimizer, self.mainscheduler , epoch, self.run_name)
+                 
+
+
+            self.tr_loss.append(self.tr_loss_epoch / len(self.train_data))
+            self.val_loss.append(self.val_loss_epoch / len(self.valid_data))
+            loss_per_epoch = self.tr_loss_epoch / len(self.train_data)
+            val_per_epoch = self.val_loss_epoch / len(self.valid_data)
+            time_taken = (time.time()-self.stime)/60
+            print(f"Epoch [{epoch}/{max_epochs}]\t Training Loss: {loss_per_epoch}\t Time Taken: {time_taken} minutes",flush = True)
+            print(f"Epoch [{epoch}/{max_epochs}]\t Validation Loss: {val_per_epoch}\t Time Taken: {time_taken} minutes",flush = True)
+            wandb.log({"Time taken per epoch": time_taken, "Training loss per epoch": loss_per_epoch,"Validation loss per epoch": val_per_epoch})
+            #I want to log this loss to wandb so avg loss per epoch
+            self.dataset_class.on_epoch_end()
+            #dg.on_epoch_end()#shuffle data inside each epoch ##TODO CHeck if this is uses it actually works
 
     def save_model(self,model, optimizer, scheduler, current_epoch, run_name):
         """
@@ -326,43 +393,24 @@ class Trainer:
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict':scheduler.state_dict()}, out)
 
-    
-
-    def train(self, max_epochs: int):
-        """
-        Train the model. learning rate schedulers are used for warmup and cosine decay depending on the epoch
-        Args:
-        max_epochs : int : maximum epochs
-        """
-         # Tell wandb to watch what the model gets up to: gradients, weights, and more!
-        wandb.watch(self.model, self.loss, log="all", log_freq=50)
-        for epoch in range(max_epochs):
-            epoch += 1 #start from 1
-            self.tr_loss_epoch = 0
-            self.stime = time.time()
-            self._run_epoch(epoch)
-            if epoch < 10:
-                self.warmupscheduler.step()
-
-            if epoch >= 10:
-                self.mainscheduler.step()
-
-            if epoch % self.save_every == 0:
-                self.save_model(self.model, self.optimizer, self.mainscheduler , epoch, self.run_name)
-                 
 
 
-            self.tr_loss.append(self.tr_loss_epoch / len(self.train_data))
-            loss_per_epoch = self.tr_loss_epoch / len(self.train_data)
-            time_taken = (time.time()-self.stime)/60
-            print(f"Epoch [{epoch}/{max_epochs}]\t Training Loss: {loss_per_epoch}\t Time Taken: {time_taken} minutes",flush = True)
-            #print(f"Epoch [{epoch}/{max_epochs}]\t Time Taken: {time_taken} minutes",flush = True) 
-            wandb.log({"Time taken per epoch": time_taken, "Training loss per epoch": loss_per_epoch})
-            #I want to log this loss to wandb so avg loss per epoch
-            self.dataset_class.on_epoch_end()
-            #dg.on_epoch_end()#shuffle data inside each epoch ##TODO CHeck if this is uses it actually works
+def load_model(model, optimizer, scheduler, config):
+    """
+    Load the model
+    Returns:
+    model : PreModel : model
+    optimizer : torch.optim.Optimizer : optimizer
+    scheduler : torch.optim.lr_scheduler : scheduler
+    """
+    run_name = config.run_name +f"_epoch_{config.last_epoch}.pt"
+    out = os.path.join('./data/saved_models/',run_name)
+    checkpoint = torch.load(out)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
-
+    return model, optimizer, scheduler
 
 def load_train_objs(config, file_paths):
     """
@@ -380,16 +428,26 @@ def load_train_objs(config, file_paths):
     """
     dg, vdg = prepare_datasets(file_paths, config.resolution)
     train_loader, valid_loader = prepare_dataloaders(dg, vdg, config.batch_size, config.num_workers)
-    model = PreModel("resnet18").to("cuda")
+    model = PreModel("resnet18",config.pretrained).to("cuda")
     print(f" Summary of the model: {summary(model, (4, 128, 128))}",flush=True)# Works now
+
+    if config.continue_training:
+        lr = config.last_lr
+    else: 
+        lr = 0.15 #default
     optimizer = LARS(
                     [params for params in model.parameters() if params.requires_grad],
-                    lr=0.2,
+                    lr=lr,
                     weight_decay=1e-6,
                     exclude_from_weight_decay=["batch_normalization", "bias"],
                     )
     warmupscheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch : (epoch+1)/10.0, verbose = True) #decay the learning rate with the cosine decay schedule without restarts"
     mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 500, eta_min=0.05, last_epoch=-1, verbose = True)#scheduler for cosine decay
+    #load prevoius model
+    if config.continue_training:
+        model, optimizer, mainscheduler = load_model(model, optimizer, mainscheduler, config)
+    
+    
     criterion = SimCLR_Loss(batch_size = config.batch_size, temperature = 0.5)#loss function
     
     
@@ -406,7 +464,7 @@ def main(device, file_paths, config):
     batch_size : int : batch size
     """
     model,dg,train_loader, valid_loader,optimizer, warmupscheduler, mainscheduler, criterion = load_train_objs(config,file_paths)
-    trainer = Trainer(model, dg,train_loader, valid_loader, optimizer, device, warmupscheduler, mainscheduler, criterion, config.save_every, config.run_name)
+    trainer = Trainer(model, dg,train_loader, valid_loader, optimizer, device, warmupscheduler, mainscheduler, criterion, config)
     trainer.train(config.total_epochs)
 
 
