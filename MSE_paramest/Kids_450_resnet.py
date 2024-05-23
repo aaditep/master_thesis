@@ -13,6 +13,7 @@ import wandb
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset, DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 
@@ -41,6 +42,55 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         return out
     
+class LinearLayer(nn.Module):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 use_bias = True,
+                 use_bn = False):
+        super(LinearLayer, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.use_bias = use_bias
+        self.use_bn = use_bn
+
+        self.linear = nn.Linear(self.in_channels,
+                                self.out_channels,
+                                bias = self.use_bias and not self.use_bn)
+
+        if self.use_bn:
+            self.bn = nn.BatchNorm1d(self.out_channels)
+
+    def forward(self, x):
+        x = self.linear(x)
+        if self.use_bn:
+            x = self.bn(x)
+        return x
+
+class ProjectionHead(nn.Module):
+    def __init__(self,
+                in_channels,
+                hidden_channels,
+                out_channels,
+                head_type = 'nonlinear'):
+        super(ProjectionHead, self).__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.out_channels = out_channels
+        self.head_type = head_type
+            
+        if self.head_type == 'linear':
+            self.layers = LinearLayer(self.in_channels,self.out_channels,use_bias=False, use_bn = False)
+        elif self.head_type == 'nonlinear':
+            self.layers = nn.Sequential(
+                LinearLayer(self.in_channels,self.hidden_channels,use_bias = True, use_bn = True),
+                nn.ReLU(),
+                LinearLayer(self.hidden_channels,self.out_channels,use_bias = False, use_bn = True))
+
+    def forward(self, x):
+        x = self.layers(x)
+        return x
+    
 
 class ResNet(nn.Module):
     """
@@ -52,20 +102,28 @@ class ResNet(nn.Module):
     layers : int : number of layers
     num_classes : int : number of classes
     """
-    def __init__(self, block, layers=15, num_classes = 10):
+    def __init__(self, block, layers, num_classes = 10):
         super(ResNet, self).__init__()
         self.inplanes = 128
         #first two layers for downsampling
         self.conv1 = nn.Sequential(
-                        nn.Conv2d(4, 64, kernel_size = (3,3), stride = 2),
+                        nn.Conv2d(4, 128, kernel_size = (3,3), stride = 2),
                         #nn.BatchNorm2d(64),
                         nn.ReLU())
         self.conv2 = nn.Sequential(
-                        nn.Conv2d(64, 128, kernel_size = (3,3), stride = 1),
+                        nn.Conv2d(128, 128, kernel_size = (3,3), stride = 2),
                         nn.ReLU())
-        self.layer1 = self._make_layer(block, 128, layers, stride = 1)
-        self.fc = nn.Linear(476288, 2)
         
+        self.layer0 = self._make_layer(block, 128, layers[0], stride = 1)
+        self.layer1 = self._make_layer(block, 128, layers[1], stride = 2)
+        self.layer2 = self._make_layer(block, 128, layers[2], stride = 2)
+        self.layer3 = self._make_layer(block, 128, layers[3], stride = 2)
+        #self.avgpool = nn.AvgPool2d(4, stride=1)
+        #self.fc = nn.Linear(2048, 2)
+        #self.projector = ProjectionHead(2048, 128, 2)
+        
+
+
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes:
@@ -83,12 +141,36 @@ class ResNet(nn.Module):
     
     
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
+        x = self.conv1(x) 
+        x = self.conv2(x) 
+        x = self.layer0(x) #residual block with specified layers
         x = self.layer1(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        #x = self.avgpool(x)
+        x = x.view(x.size(0), -1) #squeezing
+        #x = self.projector(x)
+        #x = self.fc(x)# old output
 
+        return x
+
+class Regression_model(nn.Module):
+    def __init__(self, layers : list, head_type, hidden_channels, out_params = 2):
+        super(Regression_model, self).__init__()
+        self.layers = layers
+        self.out_params = 2
+        self.head_type = head_type
+        self.hidden_channels = hidden_channels
+        
+        #define the extractable part of the model
+        self.resnet = ResNet(ResidualBlock, layers = self.layers)
+
+        #define the projection head
+        self.projector = ProjectionHead(2048, self.hidden_channels, self.out_params, head_type = self.head_type)
+
+    def forward(self, x):
+        x = self.resnet(x)
+        x = self.projector(x)
         return x
 
 def load_config(config_file):
@@ -281,6 +363,9 @@ class Trainer:
             self.stime = time.time()
             self._run_epoch(epoch)
 
+            #shceduler  step
+            #self.scheduler.step()
+
             if epoch % self.save_every == 0:
                 self.save_model(self.model, self.optimizer, self.scheduler , epoch, self.run_name)
                  
@@ -290,13 +375,18 @@ class Trainer:
             self.val_loss.append(self.val_loss_epoch / len(self.valid_data))
             loss_per_epoch = self.tr_loss_epoch / len(self.train_data)
             val_per_epoch = self.val_loss_epoch / len(self.valid_data)
+
             time_taken = (time.time()-self.stime)/60
             print(f"Epoch [{epoch}/{max_epochs}]\t Training Loss: {loss_per_epoch}\t Time Taken: {time_taken} minutes",flush = True)
             print(f"Epoch [{epoch}/{max_epochs}]\t Validation Loss: {val_per_epoch}\t Time Taken: {time_taken} minutes",flush = True)
-            wandb.log({"Time taken per epoch": time_taken, "Training loss per epoch": loss_per_epoch,"Validation loss per epoch": val_per_epoch})
+            print("Lr per epoch:", self.optimizer.param_groups[0]["lr"],flush = True)
+            #shceduler  step
+            #self.scheduler.step(val_per_epoch)            
+            
+            wandb.log({"Time taken per epoch": time_taken, "Training loss per epoch": loss_per_epoch,"Validation loss per epoch": val_per_epoch, "Lr per epoch " :self.optimizer.param_groups[0]["lr"]})
             #I want to log this loss to wandb so avg loss per epoch
             self.dataset_class.on_epoch_end()
-            #dg.on_epoch_end()#shuffle data inside each epoch ##TODO CHeck if this is uses it actually works
+            #dg.on_epoch_end()#shuffle data inside each epoch ##TODO CHeck if this is uses it actually worksss
 
     def save_model(self,model, optimizer, scheduler, current_epoch, run_name):
         """
@@ -352,15 +442,17 @@ def load_train_objs(config, file_paths_train, file_paths_test):
     """
     dg, vdg, tdg = prepare_datasets(file_paths_train, file_paths_test, config.resolution)
     train_loader, valid_loader,test_loader = prepare_dataloaders(dg, vdg, tdg, config.batch_size, config.num_workers)
-    model = ResNet(ResidualBlock, layers = 5).to("cuda")
+    #model = ResNet(ResidualBlock, layers = [2,3,3,2]).to("cuda")
+    model = Regression_model(layers = [2,3,3,2], head_type= "nonlinear",hidden_channels= 1024 ).to("cuda")
     print(f" Summary of the model: {summary(model, (4, config.resolution, config.resolution))}",flush=True)# Works now
 
     if config.continue_training:
         lr = config.last_lr
     else: 
-        lr = 5e-5 #default
+        lr = 0.5e-4 #default
     optimizer = optim.Adam(model.parameters(),lr = lr, betas = (0.9, 0.999))
-    mainscheduler =  StepLR(optimizer, step_size=10, gamma=0.1) # just a dummy scheduler
+    mainscheduler =  ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
+    #mainscheduler =  StepLR(optimizer, step_size=10, gamma=0.1) # just a dummy scheduler
     #load prevoius model
     if config.continue_training:
         model, optimizer, mainscheduler = load_model(model, optimizer, mainscheduler, config)
