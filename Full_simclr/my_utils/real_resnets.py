@@ -138,7 +138,7 @@ class Resnet_regressionmodel(nn.Module):
         self.pretrained.fc = Identity()
         
         for p in self.pretrained.parameters():
-            p.requires_grad = True
+            p.requires_grad = False ### CHANGING TO FALSE FOR A TEST
             
         if self.base_model == "resnet18":
             self.projector = ProjectionHead(512, 256, 2,dropout_rate = self.dropout_rate ,head_type = self.head_type)
@@ -166,7 +166,7 @@ class DSModel(nn.Module):
         
         #set rquieres grad to false for the premodel to avoid training the main body of it it
         for p in self.premodel.parameters():
-            p.requires_grad = True#False
+            p.requires_grad = False
             
         for p in self.premodel.projector.parameters():
             p.requires_grad = False

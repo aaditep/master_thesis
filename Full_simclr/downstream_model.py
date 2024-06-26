@@ -14,18 +14,18 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from my_utils.models import Regression_model, Regression_model_2
+from my_utils.models import custom_pretrainingmodel, custom_DSModel, custom_Regression_model
 from my_utils.real_resnets import Resnet_regressionmodel, DSModel, Resnet_pretrainingmodel
 
 
 
 
 def load_config(config_file):
-
     """Load YAML configuration from file.
     args:
     config_file : str : path to config file
     returns:
+    config : dict : configuration dictionary
     
     """
     with open(config_file, "r") as yaml_file:
@@ -38,9 +38,9 @@ def prepare_datasets(file_paths_train : list, file_paths_test : list, resolution
     Prepare the datasets for training and validation data
 
     Args:
-    file_paths : list : list of file paths
+    file_paths_train : list : list of file paths for training data
+    file_paths_test : list : list of file paths for test data
     resolution : int : resolution of the data
-
     Returns:
     dg : Kids450 : dataset for training data
     vdg : Kids450 : dataset for validation data
@@ -121,21 +121,21 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = mainscheduler
         self.loss = criterion
-        self.save_every = config.save_every
-        self.run_name = config.run_name
-        self.continue_training = config.continue_training
+        self.save_every = config.save_every #save model every x epochs
+        self.run_name = config.run_name #name of the model
+        self.continue_training = config.continue_training # bool continue training from last epoch
 
-        self.epoch_range = range(1,config.total_epochs+1)
-        self.total_batches = len(self.train_data)
+        self.epoch_range = range(1,config.total_epochs+1) #range of epochs
+        self.total_batches = len(self.train_data) #total number of batches
         self.example_ct = 0 # number of examples seen
         self.batch_ct = 0 # number of batches seen
 
 
-        self.stime = 0
-        self.tr_loss =[]
-        self.val_loss = []
-        self.tr_loss_epoch = 0
-        self.val_loss_epoch = 0
+        self.stime = 0 #start time
+        self.tr_loss =[] #training loss WITHIN epoch
+        self.val_loss = [] #validation loss WITHIN epoch
+        self.tr_loss_epoch = 0 #training loss per epoch
+        self.val_loss_epoch = 0 #validation loss per epoch
 
 
 
@@ -250,11 +250,9 @@ class Trainer:
         save_path = "/cluster/work/refregier/atepper/saved_models/" + run_name +"/"  #work storage
         if not os.path.exists(save_path):
             os.makedirs(save_path)
+            
         run_name = run_name + f"_epoch_{current_epoch}.pt"
-        #save_path = './data/saved_models/'
 
-        if self.continue_training:
-            run_name = run_name + f"_epoch_{current_epoch + config.last_epoch}.pt"  
         out = os.path.join(save_path,run_name)
 
         torch.save({'model_state_dict': model.state_dict(),
@@ -264,6 +262,11 @@ class Trainer:
 def load_model(model, optimizer, scheduler, config):
     """
     Load the model
+    args:
+    model : PreModel : model
+    optimizer : torch.optim.Optimizer : optimizer
+    scheduler : torch.optim.lr_scheduler : scheduler
+    config : dict : configuration dictionary
     Returns:
     model : PreModel : model
     optimizer : torch.optim.Optimizer : optimizer
@@ -290,11 +293,17 @@ def load_pretrained_model(model, config):
     last_epoch = config.last_epoch
     save_path = "/cluster/work/refregier/atepper/saved_models/" + config.pretrained_model +"/"  #work storage
     run_name = config.pretrained_model +f"_epoch_{last_epoch}.pt"
+    #save_path = "/cluster/work/refregier/atepper/saved_models/custom_resnet_rull_run_continue/"
+    #run_name = "custom_resnet_rull_run_continue_epoch_200.pt_epoch_300.pt"
     out = os.path.join(save_path ,run_name)
     print(f"Loading pretrained model from {out}",flush=True)
     checkpoint = torch.load(out)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    print("Pretrained model loaded",flush=True)
+    if config.use_pretrained_model:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print("Pretrained model loaded",flush=True)
+    else:
+        print("Pretrained model not loaded, using random initialization",flush=True)
     print(f" Summary of the pretrained model: {summary(model, (4, 128, 128))}",flush=True)
 
     
@@ -318,7 +327,7 @@ def load_train_objs(config, file_paths_train, file_paths_test):
     """
     dg, vdg, tdg = prepare_datasets(file_paths_train, file_paths_test, config.resolution)
     train_loader, valid_loader,test_loader = prepare_dataloaders(dg, vdg, tdg, config.batch_size, config.num_workers)
-
+    ################STOCK MODEL#####################
     #load pretrained model Resnet_pretrainingmodel
     pretrained_model = Resnet_pretrainingmodel('resnet34_simclr',
                                    pretrained_weights = False, #these are the resnet weights
@@ -331,13 +340,30 @@ def load_train_objs(config, file_paths_train, file_paths_test):
                    base_model = "resnet34",
                    dropout_rate = config.dropout,
                    head_type = config.projection_head).to('cuda:0')
+    ##################Stock MODEL#################
+
+    ##################CUSTOM MODEL################# 
+    #pretrained_model = custom_pretrainingmodel('custom_resnet_simclr',
+    #                               layers = [3, 4, 6, 3],
+    #                               dropout_rate = config.dropout, 
+    #                               head_type = "nonlinear").to('cuda:0')
+    ##load weights config.projection_head
+    #pretrained_model = load_pretrained_model(pretrained_model, config)
+    ##load downstream model
+    #model = custom_DSModel(pretrained_model,
+    #               base_model = "custom_resnet",
+    #               dropout_rate = config.dropout,
+    #               head_type = config.projection_head).to('cuda:0')    
+    ###################CUSTOM MODEL#################
     print(f" Summary of the downstream model: {summary(model, (4, 128, 128))}",flush=True)
 
     print(f'Model dropout rate: {config.dropout}',flush=True)
     lr = config.learning_rate   #0.5e-4 #default
     #optimizer = optim.Adam(model.parameters(),lr = lr, betas = (0.9, 0.999))
     optimizer = optim.Adam([params for params in model.parameters() if params.requires_grad],lr = lr, betas = (0.9, 0.999))
-    mainscheduler =  ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=5.0e-7)
+    #mainscheduler =  ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=5.0e-7)
+    mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10,T_mult = 2, eta_min = 0.0001, last_epoch = -1, verbose = True)
+
     #mainscheduler =  StepLR(optimizer, step_size=10, gamma=0.1) # just a dummy scheduler
     #load prevoius model
     if config.continue_training:

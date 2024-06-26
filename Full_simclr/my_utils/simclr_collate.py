@@ -43,6 +43,7 @@ def collate_fn(idxs):
                 for elem in elements:
 
                     x1 = data[elem] #get element from file
+                    #x2 = data[elem] #get different element from same file ####DIFFerent implementation
                     x2 = data[x2_indices[count]] #get different element from same file
                     
                     

@@ -54,30 +54,32 @@ class LinearLayer(nn.Module):
 
 class ProjectionHead(nn.Module):
     def __init__(self,
-                in_channels,
-                hidden_channels,
-                out_channels,
-                head_type = 'nonlinear'):
-        super(ProjectionHead, self).__init__()
-        self.in_channels = in_channels
-        self.hidden_channels = hidden_channels
-        self.out_channels = out_channels
+                 in_features,
+                 hidden_features,
+                 out_features,
+                 dropout_rate,
+                 head_type = 'nonlinear',
+                 **kwargs):
+        super(ProjectionHead,self).__init__(**kwargs)
+        self.in_features = in_features
+        self.out_features = out_features
+        self.hidden_features = hidden_features
         self.head_type = head_type
-            
+        self.dropout_rate = dropout_rate
+
         if self.head_type == 'linear':
-            self.layers = LinearLayer(self.in_channels,self.out_channels,use_bias=False, use_bn = False)
+            self.layers = LinearLayer(self.in_features,self.out_features,False, True)
         elif self.head_type == 'nonlinear':
             self.layers = nn.Sequential(
-                LinearLayer(self.in_channels,self.hidden_channels,use_bias = True, use_bn = True),
+                LinearLayer(self.in_features,self.hidden_features,True, True),
                 nn.ReLU(),
-                LinearLayer(self.hidden_channels,self.out_channels,use_bias = False, use_bn = True))
+                LinearLayer(self.hidden_features,self.out_features,False,True))
         elif self.head_type == 'nonlinear_dropout':
             self.layers = nn.Sequential(
-            nn.Linear(128, 64),  # Fully connected layer with 64 output units
+            nn.Linear(self.in_features, self.hidden_features),  # Fully connected layer with 64 output units
             nn.ReLU(),           # ReLU activation function
-            nn.Dropout(0.2),     # Dropout layer with 10% dropout rate
-            nn.Linear(64, 2)     # Fully connected layer with 2 output units for regression
-        )
+            nn.Dropout(self.dropout_rate),     # Dropout layer 
+            nn.Linear(self.hidden_features, self.out_features))     # Fully connected layer with 2 output units for regression
             
 
     def forward(self, x):
@@ -150,20 +152,54 @@ class ResNet(nn.Module):
         #x = self.fc(x)# old output
 
         return x
-
-class Regression_model(nn.Module):
-    def __init__(self, layers : list, head_type, hidden_channels, out_params = 2):
-        super(Regression_model, self).__init__()
+    
+class custom_pretrainingmodel(nn.Module):
+    def __init__(self,base_model,layers,dropout_rate,head_type):
+    
+        super(custom_pretrainingmodel, self).__init__()
+        self.base_model = base_model
+        self.dropout_rate = dropout_rate
         self.layers = layers
-        self.out_params = 2
         self.head_type = head_type
-        self.hidden_channels = hidden_channels
+        
+        #PRETRAINED MODEL
+        if self.base_model == "custom_resnet" or self.base_model == 'custom_resnet_simclr':
+            self.resnet = ResNet(ResidualBlock, layers = self.layers)
+
+
+        for p in self.resnet.parameters():
+            p.requires_grad = True
+            
+        if self.base_model == "custom_resnet":
+            self.projector = ProjectionHead(128, 64, 2,dropout_rate = self.dropout_rate ,head_type = self.head_type)
+        if self.base_model == 'custom_resnet_simclr':
+            self.projector = ProjectionHead(128, 128, 32,dropout_rate = self.dropout_rate ,head_type = self.head_type)
+
+    def forward(self, x):
+        x = self.resnet(x)
+        x = self.projector(x)
+        return x
+
+class custom_Regression_model(nn.Module):
+    def __init__(self, base_model, layers : list, head_type, dropout_rate, out_params = 2):
+        super(custom_Regression_model, self).__init__()
+        self.base_model = base_model
+        self.dropout_rate = dropout_rate
+        self.layers = layers
+        self.out_params = out_params
+        self.head_type = head_type
         
         #define the extractable part of the model
         self.resnet = ResNet(ResidualBlock, layers = self.layers)
 
-        #define the projection head
-        self.projector = ProjectionHead(128 , self.hidden_channels, self.out_params, head_type = self.head_type)
+
+        for p in self.resnet.parameters():
+            p.requires_grad = True
+            
+        if self.base_model == "custom_resnet":
+            self.projector = ProjectionHead(128, 64, 2,dropout_rate = self.dropout_rate ,head_type = self.head_type)
+
+
 
     def forward(self, x):
         x = self.resnet(x)
@@ -171,6 +207,39 @@ class Regression_model(nn.Module):
         return x
 
 
+
+class custom_DSModel(nn.Module):
+    def __init__(self,premodel,base_model,dropout_rate, head_type):
+        super().__init__()
+        
+        self.premodel = premodel
+        self.base_model = base_model
+        self.dropout_rate = dropout_rate
+        self.head_type = head_type
+        
+        #set rquieres grad to false for the premodel to avoid training the main body of it it
+        for p in self.premodel.parameters():
+            p.requires_grad = False
+            
+        for p in self.premodel.projector.parameters():
+            p.requires_grad = False
+        
+        #The only trained part of the model is the new projector
+        
+        
+        if self.base_model == "custom_resnet":
+            self.projector = ProjectionHead(128, 64, 2,dropout_rate = self.dropout_rate ,head_type = self.head_type)
+        if self.base_model == 'custom_resnet_simclr':
+            self.projector = ProjectionHead(128, 128, 32,dropout_rate = self.dropout_rate ,head_type = self.head_type)
+        
+    def forward(self,x):
+        """
+        By not adding here premodel.projector you are omitting it
+        """
+        out = self.premodel.resnet(x)
+        #omit the premodel projector and replace with the needed new projector
+        out = self.projector(out)
+        return out
 
 
 

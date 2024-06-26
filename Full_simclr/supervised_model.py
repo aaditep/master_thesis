@@ -14,7 +14,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from my_utils.models import Regression_model, Regression_model_2
+from my_utils.models import custom_pretrainingmodel, custom_DSModel, custom_Regression_model
 from my_utils.real_resnets import Resnet_regressionmodel
 
 
@@ -26,6 +26,7 @@ def load_config(config_file):
     args:
     config_file : str : path to config file
     returns:
+    config : dict : configuration dictionary
     
     """
     with open(config_file, "r") as yaml_file:
@@ -38,7 +39,8 @@ def prepare_datasets(file_paths_train : list, file_paths_test : list, resolution
     Prepare the datasets for training and validation data
 
     Args:
-    file_paths : list : list of file paths
+    file_paths_train : list : list of file paths for training data
+    file_paths_test : list : list of file paths for test data
     resolution : int : resolution of the data
 
     Returns:
@@ -97,6 +99,7 @@ def prepare_dataloaders(dg, vdg, tdg, batch_size: int, num_workers: int):
 class Trainer:
     """
     Trainer class to train the model
+
     """
     def __init__(
         self,
@@ -121,21 +124,21 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = mainscheduler
         self.loss = criterion
-        self.save_every = config.save_every
-        self.run_name = config.run_name
-        self.continue_training = config.continue_training
+        self.save_every = config.save_every #save model every x epochs
+        self.run_name = config.run_name #name of the model and run that will be saved
+        self.continue_training = config.continue_training # bool for continue training from a previous model
 
-        self.epoch_range = range(1,config.total_epochs+1)
-        self.total_batches = len(self.train_data)
+        self.epoch_range = range(1,config.total_epochs+1) #range of epochs
+        self.total_batches = len(self.train_data) #total number of batches
         self.example_ct = 0 # number of examples seen
         self.batch_ct = 0 # number of batches seen
 
 
-        self.stime = 0
-        self.tr_loss =[]
-        self.val_loss = []
-        self.tr_loss_epoch = 0
-        self.val_loss_epoch = 0
+        self.stime = 0  #start time
+        self.tr_loss =[] #training loss WITHIN epoch
+        self.val_loss = []  #validation loss WITHIN epoch
+        self.tr_loss_epoch = 0 #training loss OVER epoch
+        self.val_loss_epoch = 0 #validation loss OVER epoch
 
 
 
@@ -265,6 +268,11 @@ class Trainer:
 def load_model(model, optimizer, scheduler, config):
     """
     Load the model
+    args:
+    model : PreModel : model
+    optimizer : torch.optim.Optimizer : optimizer
+    scheduler : torch.optim.lr_scheduler : scheduler
+    config : dict : configuration dictionary
     Returns:
     model : PreModel : model
     optimizer : torch.optim.Optimizer : optimizer
@@ -292,6 +300,9 @@ def load_train_objs(config, file_paths_train, file_paths_test):
     
     Returns:
     model : PreModel : model
+    dg : Kids450 : dataset for training data
+    train_loader : DataLoader : dataloader for training data
+    valid_loader : DataLoader : dataloader for validation data
     optimizer : torch.optim.Optimizer : optimizer
     mainscheduler : torch.optim.lr_scheduler.CosineAnnealingWarmRestarts : main scheduler
     criterion : SimCLR_Loss : loss function
@@ -299,15 +310,22 @@ def load_train_objs(config, file_paths_train, file_paths_test):
     dg, vdg, tdg = prepare_datasets(file_paths_train, file_paths_test, config.resolution)
     train_loader, valid_loader,test_loader = prepare_dataloaders(dg, vdg, tdg, config.batch_size, config.num_workers)
 
-    model = Resnet_regressionmodel('resnet18',
-                                   pretrained_weights = False, 
+
+    #### stock Resnet model
+    model = Resnet_regressionmodel('resnet34',
+                                   pretrained_weights = True, 
                                    dropout_rate = config.dropout, 
                                    head_type = config.projection_head).to('cuda:0')
-    ####LAST
-    #model = Regression_model_2(layers = [2,3,3,2], head_type= "nonlinear_dropout",hidden_channels= 64 ).to("cuda")
-    #####THE ONE TO USE TONIGHT
-    #model = Regression_model(layers = [3,4,6,3], head_type= config.projection_head,hidden_channels= 128).to("cuda")
-    #####The ONE TO USE TONIGHT
+    #### stock Resnet model
+
+    ##### custom resnet model
+    #
+    #model = custom_Regression_model("custom_resnet",
+    #                               layers = [3, 4, 6, 3], 
+    #                               dropout_rate = config.dropout, 
+    #                               head_type = config.projection_head).to('cuda:0')
+    ###### custom resnet model
+
 
     print(f" Summary of the model: {summary(model, (4, 128, 128))}",flush=True)
     print(f'Model dropout rate: {config.dropout}',flush=True)

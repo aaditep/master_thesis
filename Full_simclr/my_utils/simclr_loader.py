@@ -34,7 +34,8 @@ class Kids450(Dataset):
         self.transforms =  transforms.Compose([transforms.RandomVerticalFlip(p=0.5),#random flip same as 180 degrees
                                     transforms.RandomApply([transforms.RandomRotation((270, 270))], p=0.5),
                                     transforms.RandomApply([transforms.RandomRotation((90, 90))], p=0.5),
-                                    transforms.RandomCrop(resolution),
+                                    transforms.RandomResizedCrop(resolution,(0.8,1.0)),
+                                    #transforms.RandomCrop(resolution),
                                     #AddGaussianNoise(mean=0., std=1.)
                                     ]) 
         self.transforms_valid = transforms.Compose([transforms.RandomCrop(resolution)])

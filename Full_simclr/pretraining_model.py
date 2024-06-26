@@ -17,6 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from my_utils.simclr_loader import Kids450, kids450_files_localscratch
 from my_utils.NT_xent_loss import SimCLR_Loss
 from my_utils.real_resnets import Resnet_pretrainingmodel
+from my_utils.models import custom_pretrainingmodel, custom_DSModel, custom_Regression_model
 from my_utils.simclr_collate import collate_fn
 from my_utils.LARS import LARS
 import yaml
@@ -30,6 +31,7 @@ def load_config(config_file):
     args:
     config_file : str : path to config file
     returns:
+    config : dict : configuration dictionary
     
     """
     with open(config_file, "r") as yaml_file:
@@ -42,13 +44,11 @@ def prepare_datasets(file_paths_train : list, resolution : int):
     Prepare the datasets for training and validation data
 
     Args:
-    file_paths : list : list of file paths
-    resolution : int : resolution of the data
-
+    file_paths_train : list : list of file paths for training data
+    resolution : int : resolution of the images
     Returns:
     dg : Kids450 : dataset for training data
     vdg : Kids450 : dataset for validation data
-    tdg : Kids450 : dataset for test data
     """
     dg = Kids450(phase = "train",file_paths = file_paths_train,resolution = resolution)
     vdg = Kids450(phase = "val",file_paths = file_paths_train,resolution = resolution)
@@ -62,14 +62,12 @@ def prepare_dataloaders(dg, vdg,  batch_size: int, num_workers: int):
     Args:
     dg : Kids450 : dataset for training data
     vdg : Kids450 : dataset for validation data
-    tdg : Kids450 : dataset for test data
     batch_size : int : batch size
     num_workers : int : number of workers for dataloader    
 
     Returns:
     train_loader : DataLoader : dataloader for training data
     valid_loader : DataLoader : dataloader for validation data   
-    test_loader : DataLoader : dataloader for test data
     """
     train_loader = DataLoader(dg,batch_size = batch_size,
                                drop_last=True,
@@ -121,17 +119,17 @@ class Trainer:
         self.run_name = config.run_name
         self.continue_training = config.continue_training
 
-        self.epoch_range = range(1,config.total_epochs+1)
-        self.total_batches = len(self.train_data)
+        self.epoch_range = range(1,config.total_epochs+1) #range of epochs
+        self.total_batches = len(self.train_data) #total number of batches
         self.example_ct = 0 # number of examples seen
         self.batch_ct = 0 # number of batches seen
 
 
-        self.stime = 0
-        self.tr_loss =[]
-        self.val_loss = []
-        self.tr_loss_epoch = 0
-        self.val_loss_epoch = 0
+        self.stime = 0 #start time
+        self.tr_loss =[] # training loss WITHIN epoch
+        self.val_loss = [] # validation loss WITHIN epoch
+        self.tr_loss_epoch = 0 #training loss per epoch
+        self.val_loss_epoch = 0 # validation loss per epoch
 
 
 
@@ -169,9 +167,11 @@ class Trainer:
             self.tr_loss_epoch += loss.item()
 
         if epoch < 10 and not self.continue_training:
+            print("Warmup scheduler step", flush = True)
             self.warmupscheduler.step()
 
         if epoch >= 10 or self.continue_training:
+            print("Main scheduler step", flush = True)
             self.mainscheduler.step()
             
         #validation cycle
@@ -201,7 +201,8 @@ class Trainer:
          # Tell wandb to watch what the model gets up to: gradients, weights, and more!
         wandb.watch(self.model, self.loss, log="all", log_freq=50)
         if self.continue_training:
-            self.epoch_range = range(config.last_epoch+1, config.total_epochs+1)
+            self.epoch_range = range(config.last_epoch+1, config.last_epoch + config.total_epochs+1)
+            print(f"Continuing training from epoch {config.last_epoch} to epoch {config.last_epoch + config.total_epochs+1} ",flush=True)
         for epoch in self.epoch_range:
             #epoch += 1 #start from 1
             self.tr_loss_epoch = 0
@@ -244,11 +245,9 @@ class Trainer:
         save_path = "/cluster/work/refregier/atepper/saved_models/" + run_name +"/"  #work storage
         if not os.path.exists(save_path):
             os.makedirs(save_path)
+
         run_name = run_name + f"_epoch_{current_epoch}.pt"
         #save_path = './data/saved_models/'
-
-        if self.continue_training:
-            run_name = run_name + f"_epoch_{current_epoch + config.last_epoch}.pt"  
         out = os.path.join(save_path,run_name)
 
         torch.save({'model_state_dict': model.state_dict(),
@@ -258,6 +257,11 @@ class Trainer:
 def load_model(model, optimizer, scheduler, config):
     """
     Load the model
+    args:
+    model : PreModel : model
+    optimizer : torch.optim.Optimizer : optimizer
+    scheduler : torch.optim.lr_scheduler : scheduler
+    config : dict : configuration dictionary
     Returns:
     model : PreModel : model
     optimizer : torch.optim.Optimizer : optimizer
@@ -265,12 +269,22 @@ def load_model(model, optimizer, scheduler, config):
     """
     save_path = "/cluster/work/refregier/atepper/saved_models/" + config.run_name +"/"  #work storage
     run_name = config.run_name +f"_epoch_{config.last_epoch}.pt"
+    if config.continue_training:
+        save_path = "/cluster/work/refregier/atepper/saved_models/" + config.last_run_name +"/"  #work storage
+        run_name = config.last_run_name +f"_epoch_{config.last_epoch}.pt"
+        #save_path = "/cluster/work/refregier/atepper/saved_models/custom_resnet_rull_run_continue/"
+        #run_name = "custom_resnet_rull_run_continue_epoch_200.pt_epoch_300.pt"
     #save_path = './data/saved_models/'
     out = os.path.join(save_path ,run_name)
     checkpoint = torch.load(out)
     model.load_state_dict(checkpoint['model_state_dict'])
+    #print("Lr before loading optimizer:",optimizer.param_groups[0]["lr"],flush = True)
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    #print("Lr after optimizer:",optimizer.param_groups[0]["lr"],flush = True)
+    #scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    #print("Lr after scheduler:",optimizer.param_groups[0]["lr"],flush = True)
+
+    print(f"Model loaded from epoch {config.last_epoch}",flush=True)
 
     return model, optimizer, scheduler
 
@@ -292,10 +306,22 @@ def load_train_objs(config, file_paths_train):
     dg, vdg = prepare_datasets(file_paths_train, config.resolution)
     train_loader, valid_loader = prepare_dataloaders(dg, vdg, config.batch_size, config.num_workers)
 
-    model = Resnet_pretrainingmodel("resnet50_simclr",
+
+    ####stock resnet model#####
+    model = Resnet_pretrainingmodel("resnet34_simclr",
                                    pretrained_weights = False, 
                                    dropout_rate = config.dropout, 
                                    head_type = config.projection_head).to('cuda:0')
+    #####stock resnet model#####
+
+
+    ##custom resnet model#####
+    #model = custom_pretrainingmodel('custom_resnet_simclr',
+    #                               layers = [3, 4, 6, 3],
+    #                               dropout_rate = config.dropout, 
+    #                               head_type = config.projection_head).to('cuda:0')
+    #
+    ###custom resnet model######
 
     print(f" Summary of the model: {summary(model, (4, 128, 128))}",flush=True)
     print(f'Model dropout rate: {config.dropout}',flush=True)
@@ -306,12 +332,18 @@ def load_train_objs(config, file_paths_train):
                     weight_decay=1e-6,
                     exclude_from_weight_decay=["batch_normalization", "bias"],
                     )
-    warmupscheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch : (epoch+1)/10.0, verbose = True) #decay the learning rate with the cosine decay schedule without restarts"
-    mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 500, eta_min=0.05, last_epoch=-1, verbose = True)#scheduler for cosine decay
+    print("Lr right after initializing optimizer:",optimizer.param_groups[0]["lr"],flush = True)
+    if not config.continue_training:
+        
+        warmupscheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch : (epoch+1)/10.0, verbose = True) #decay the learning rate with the cosine decay schedule without restarts"
+    if config.continue_training:
+        warmupscheduler = None
+    #mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 500, eta_min=0.05, last_epoch=-1, verbose = True)#scheduler for cosine decay
+    mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10,T_mult = 2, eta_min = 0.005, last_epoch = -1, verbose = True)
     #load prevoius model
     if config.continue_training:
         model, optimizer, mainscheduler = load_model(model, optimizer, mainscheduler, config)
-
+    #mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10,T_mult = 2, eta_min = 0.0005, last_epoch = 100, verbose = True)
     criterion = SimCLR_Loss(batch_size = config.batch_size, temperature = 0.5)#loss function
         
     
@@ -332,7 +364,7 @@ def main(device, file_paths_train, config):
     """
     model,dg,train_loader, valid_loader,optimizer,warmupscheduler, mainscheduler, criterion = load_train_objs(config,file_paths_train)
     trainer = Trainer(model, dg,train_loader, valid_loader,optimizer, device, warmupscheduler, mainscheduler, criterion, config)
-    trainer.train(config.total_epochs)
+    trainer.train(config.total_epochs + config.last_epoch)
 
 
 if __name__ == "__main__":
