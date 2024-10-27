@@ -35,8 +35,9 @@ class mae_kids450(Dataset):
         ###Adding transforms      
         #https://github.com/pytorch/vision/issues/566 might become slow  Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]))
         #self.transforms = Kids450_augmentations(self.resolution)
-        self.transforms =  transforms.Compose([transforms.RandomResizedCrop(size=(self.resolution,self.resolution), scale=(0.7, 1.0), interpolation=3),  # 3 is bicubic
-                                    #transforms.RandomVerticalFlip(p=0.5),#random flip same as 180 degrees
+        self.transforms =  transforms.Compose([transforms.RandomResizedCrop(self.resolution, interpolation=3), 
+                                    #transforms.Resize(self.resolution, interpolation=3), # 3 is bicubic
+                                    transforms.RandomVerticalFlip(p=0.5),#random flip same as 180 degrees
                                     #transforms.RandomHorizontalFlip(),
                                     transforms.RandomApply([transforms.RandomRotation((270, 270))], p=0.5),
                                     transforms.RandomApply([transforms.RandomRotation((90, 90))], p=0.5),
@@ -46,14 +47,19 @@ class mae_kids450(Dataset):
                                     #AddGaussianNoise(mean=0., std=1.)
                                     ]) 
         
-        self.transforms_valid = transforms.Compose([transforms.RandomResizedCrop(size=(self.resolution,self.resolution), interpolation=3),  # 3 is bicubic
+        self.transforms_valid = transforms.Compose([transforms.Resize(256, interpolation=3),  # 3 is bicubic This is needed if the model is with other input size
+                                    transforms.CenterCrop(self.resolution),
                                     transforms.Normalize(( 1.7944e-13,-9.2091e-14,-1.8305e-13, 4.7488e-13),(0.0079,0.0065,0.0093,0.0116)),
                                     ]) 
+        #self.transforms_valid = transforms.Compose([transforms.Resize(256,interpolation=3),  # 3 is bicubic
+        #                            transforms.CenterCrop(self.resolution),
+        #                            transforms.Normalize(( 1.7944e-13,-9.2091e-14,-1.8305e-13, 4.7488e-13),(0.0079,0.0065,0.0093,0.0116)),
+        #                            ]) 
         
     def generate_sample_indices(self):
         """
-        This function gives me basically a lookup table where I will have 
-        sample file and sample index pairs scrambled for randomizing effect
+        This function gives me basically a lookup table where I will have s
+        ample file and sample index pairs scrambled for randomizing effect
         
         """
         sample_indices = []        
@@ -104,13 +110,12 @@ class mae_kids450(Dataset):
         
         if self.phase == 'train':
             frame = self.transforms(frame)
+            #rint("train here")
         else:
-            #if self.resolution != 128:
-            #    frame = self.transforms_valid(frame)
-            #return frame
-            frame = self.transforms_valid(frame)
+            if self.resolution != 128:
+                #print("valid here")
+                frame = self.transforms_valid(frame)
             return frame
-
         
         return frame
     
