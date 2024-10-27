@@ -138,7 +138,7 @@ class Resnet_regressionmodel(nn.Module):
         self.pretrained.fc = Identity()
         
         for p in self.pretrained.parameters():
-            p.requires_grad = False ### CHANGING TO FALSE FOR A TEST
+            p.requires_grad = True ### CHANGING TO FALSE FOR A TEST
             
         if self.base_model == "resnet18":
             self.projector = ProjectionHead(512, 256, 2,dropout_rate = self.dropout_rate ,head_type = self.head_type)

@@ -14,22 +14,23 @@ import torchvision
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
-class Kids450(Dataset):
-    """
-    This class is used to load the Kids450 dataset
-    """
+class regr_Kids450(Dataset):
     def __init__(self,phase,file_paths,resolution):
         self.phase = phase #string for "train" or "valid" to separate the phase
+        self.file_paths = file_paths #file path for
         if self.phase == "train":
             self.sample_range = [0,8000]
         if self.phase == "val":
             self.sample_range = [8000,10000]
+        if self.phase == "test":
+            # The test file will have separate files so will start from 0 to 2000
+            self.sample_range = [0,2000]
+
             
-        self.file_paths = file_paths #file path for
-        self.sample_indices, self.x2_idx = self.generate_sample_indices() #sample index pairs (file_nr, sample_nr)
-        #self.MEAN, self.STD = self.get_data_stats()
+        self.sample_indices = self.generate_sample_indices() #sample index pairs (file_nr, sample_nr)
         self.length = len(self.sample_indices)
         self.resolution = resolution
+        self.data_stats_dict = data_stats_dict()
      
         ###Adding transforms      
         #https://github.com/pytorch/vision/issues/566 might become slow
@@ -37,12 +38,11 @@ class Kids450(Dataset):
         self.transforms =  transforms.Compose([transforms.RandomVerticalFlip(p=0.5),#random flip same as 180 degrees
                                     transforms.RandomApply([transforms.RandomRotation((270, 270))], p=0.5),
                                     transforms.RandomApply([transforms.RandomRotation((90, 90))], p=0.5),
-                                    transforms.RandomResizedCrop(resolution,(0.8,1.0)),
-                                    #transforms.RandomCrop(resolution),
+                                    transforms.RandomCrop(resolution),
                                     #AddGaussianNoise(mean=0., std=1.)
                                     ]) 
+        
         self.transforms_valid = transforms.Compose([transforms.RandomCrop(resolution)])
-        #self.data_stats = self.get_data_stats()
     def generate_sample_indices(self):
         """
         This function gives me basically a lookup table where I will have s
@@ -52,11 +52,10 @@ class Kids450(Dataset):
         sample_indices = []        
         for i,_ in enumerate(self.file_paths):
             sample_indices.extend([(i,j) for j in range(self.sample_range[0],self.sample_range[1])])
-                
-        x2_idx = [tup[1] for tup in sample_indices] #list of sample_nr randomized from the same file for the augmentation of the image
-        np.random.shuffle(x2_idx)
-        np.random.shuffle(sample_indices) #This shuffles the indices in place
-        return sample_indices, x2_idx
+        #since the test set does not need to be shuffled i create a not conditional statement
+        if self.phase != "test":
+            np.random.shuffle(sample_indices)#shuffle indeces in place    
+        return sample_indices
         
     def __len__(self):
         """
@@ -64,20 +63,17 @@ class Kids450(Dataset):
         """
         return self.length
 
-    
-    #SO HERE WE See that the getitem gives you two images, but the images returned are augmentations and preprocess of one instanse
-    #THe self.augment gives one random augmentation
+
     def __getitem__(self,idx):
+        """
+        This function takes index  pair of 57 fails and 1 of 10000 elements and passesi it
+        to the cosmo_collate function to load the data there.
+        """
         
         x1_idx =  self.sample_indices[idx]
-        x2_idx =  self.x2_idx[idx]
-        """
-        Doing an workaround with the custom collate function.  
-        So __getitem__ will pass indices to collate function in order not to touch the correct order of indeces when shuffeling
-        """   
-        #print(idx)
-        return x1_idx, x2_idx,self
-        #return x1_idx, x2_idx,self.resolution,self.file_paths,self.augment,self
+        return x1_idx,self
+    
+
     
     #make a function that checks if first 3 samples indeed are shuffled
     def check_shuffling(self):
@@ -108,40 +104,18 @@ class Kids450(Dataset):
         
         return frame
     
-    def preprocess(self, frame):
+    def standardize_label(self,label_batch):
         """
-        Preprocesses the frame
+        This function will standardize the frame
         """
-        #print("Preprocessing",frame.shape, flush=True)
-        frame = (frame-self.MEAN)/self.STD
-        return frame
-    
-    def get_data_stats(self):
-        """
-        This function is used to get the mean and std of the dataset
-        """
-        filepath ="/cluster/work/refregier/atepper/kids_450/full_data/kids450_train_stats.pkl"
-        with open(filepath, 'rb') as f:
-            data_stats = pkl.load(f)
-            MEAN = data_stats["Overall_mean"]
-            STD = data_stats["Overall_std"]
-        return MEAN, STD  
-    
-#def Kids450_augmentations(resolution):
-#    """
-#    This function returns a set of augmentations for the Kids450 dataset
-#    """
-#
-#    augmentations = transforms.Compose([transforms.RandomVerticalFlip(p=0.5),#random flip same as 180 degrees
-#                                    transforms.RandomApply([transforms.RandomRotation((270, 270))], p=0.5),
-#                                    transforms.RandomApply([transforms.RandomRotation((90, 90))], p=0.5),
-#                                    transforms.RandomCrop(resolution),
-#                                    #AddGaussianNoise(mean=0., std=1.)
-#                                    ]) 
-#
-#    return augmentations
-#
+        mean_labels = self.data_stats_dict["mean_labels"] 
+        std_labels = self.data_stats_dict["label_std_deviation"]
+        label_batch = (label_batch - mean_labels) / std_labels.unsqueeze(0)
+        return label_batch
 
+
+        
+     
 
 
 
@@ -174,8 +148,6 @@ def kids450_files_localscratch():
     return file_paths_train, file_paths_test
 
 
-
-
 def kids450_files_cluster():
     ### for testing on euler  jupyter notebook
     """
@@ -189,3 +161,14 @@ def kids450_files_cluster():
     file_paths_test = glob.glob(os.path.join(input_directory, '*test.h5'))
 
     return file_paths_train, file_paths_test
+
+def data_stats_dict():
+    """
+    This function will give me a dictory with the mean and std of the dataset for labels
+    and images. But I will use only the labels since the images are already centered
+    """
+    pickle_file_path = "/cluster/work/refregier/atepper/kids_450/full_data/kids450_test_stats.pkl"
+    # Open the pickle file and load the data
+    with open(pickle_file_path, 'rb') as f:
+        data_dict = pkl.load(f)
+    return data_dict

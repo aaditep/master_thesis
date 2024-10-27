@@ -344,7 +344,7 @@ def load_train_objs(config, file_paths_train):
     if config.continue_training:
         model, optimizer, mainscheduler = load_model(model, optimizer, mainscheduler, config)
     #mainscheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10,T_mult = 2, eta_min = 0.0005, last_epoch = 100, verbose = True)
-    criterion = SimCLR_Loss(batch_size = config.batch_size, temperature = 0.5)#loss function
+    criterion = SimCLR_Loss(batch_size = config.batch_size, temperature = config.temp)#loss function
         
     
     return model,dg,train_loader, valid_loader, optimizer,warmupscheduler, mainscheduler, criterion

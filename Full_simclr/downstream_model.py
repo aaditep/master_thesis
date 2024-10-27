@@ -354,7 +354,7 @@ def load_train_objs(config, file_paths_train, file_paths_test):
     #               base_model = "custom_resnet",
     #               dropout_rate = config.dropout,
     #               head_type = config.projection_head).to('cuda:0')    
-    ###################CUSTOM MODEL#################
+    ####################CUSTOM MODEL#################
     print(f" Summary of the downstream model: {summary(model, (4, 128, 128))}",flush=True)
 
     print(f'Model dropout rate: {config.dropout}',flush=True)
