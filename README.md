@@ -1,4 +1,4 @@
-##Repository for code involved in my master thesis at ETH 2024
+## Repository for code involved in my master thesis at ETH 2024
 
 This work explores using self-supervised learning (SSL) deep neural networks to acquire
 informative representations of simulated WL (weak lensing) mass-maps through pre-training.
@@ -12,13 +12,13 @@ struggles due to limited data amount, SimCLR showed potential, but the Masked Au
 
 ## Shortcuts to Specific Model Elements
 
-### SIMCLR:
+## SIMCLR:
 - **Supervised model**: [`supervised_model.py`](Full_simclr/supervised_model.py)
 - **Pretraining model**: [`pretraining_model.py`](Full_simclr/pretraining_model.py)
 - **Downstream model**: [`downstream_model.py`](Full_simclr/downstream_model.py)
 - **Results notebook**: [`simclr_results.ipynb`](Full_simclr/simclr_results.ipynb)
 
-### MAE:
+## MAE:
 - **Pretraining model**: [`cosmo_mae2.py`](MAE/cosmo_mae2.py)
 - **Pretraining image Results**: [`cosmo_mae_book.ipynb`](MAE/cosmo_mae_book.ipynb)
 - **Supervised model/Downstream model**: [`cosmo_mae2_probe.py`](MAE/cosmo_mae2_probe.py) 
