@@ -1,4 +1,4 @@
-Repository for code involved in my master thesis at ETH 2024
+##Repository for code involved in my master thesis at ETH 2024
 
 This work explores using self-supervised learning (SSL) deep neural networks to acquire
 informative representations of simulated WL (weak lensing) mass-maps through pre-training.
@@ -10,19 +10,17 @@ a purely supervised model with the equivalent prediction task. While both models
 struggles due to limited data amount, SimCLR showed potential, but the Masked AutoEncoder
 (MAE) failed to produce useful representations.
 
-Shortcuts to specific model elements
-SIMCLR:
-Downstream model [downstream_model.py](Full_simclr/downstream_model.py)
-Pretraining_model
-Supervised_model
-Testing_book
+## Shortcuts to Specific Model Elements
 
+### SIMCLR:
+- **Supervised model**: [`supervised_model.py`](Full_simclr/supervised_model.py)
+- **Pretraining model**: [`pretraining_model.py`](Full_simclr/pretraining_model.py)
+- **Downstream model**: [`downstream_model.py`](Full_simclr/downstream_model.py)
+- **Results notebook**: [`simclr_results.ipynb`](Full_simclr/simclr_results.ipynb)
 
-MAE:
-
-Cosmo_mae2.py (Pretraining)comc
-Cosmo_mae2_probe.py (downstreaming)
-Cosmo_mae_book (pretraining)
-MAE_downstream_results (downstreaming)![image](https://github.com/user-attachments/assets/1e71a915-eea1-4fad-87d9-4a2cb3429224)
-
-
+### MAE:
+- **Pretraining model**: [`cosmo_mae2.py`](MAE/cosmo_mae2.py)
+- **Pretraining image Results**: [`cosmo_mae_book.ipynb`](MAE/cosmo_mae_book.ipynb)
+- **Supervised model/Downstream model**: [`cosmo_mae2_probe.py`](MAE/cosmo_mae2_probe.py) 
+- **Results notebook**: [`MAE_downstream_results.ipynb`](MAE/MAE_downstream_results.ipynb)
+  
